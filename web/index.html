@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Driver Sleep Monitor</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #181b22;
+    --line: #2a2f3a;
+    --text: #e8eaf0;
+    --muted: #9aa3b2;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --crit: #ef4444;
+    --accent: #3b82f6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 16px;
+    padding: 16px 20px;
+  }
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr; padding: 16px; }
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+  }
+  .card h2 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--muted);
+  }
+  #stage {
+    position: relative;
+    width: 100%;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  video { display: none; }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 14px;
+  }
+  .row:last-child { border-bottom: none; }
+  .row span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+  .big {
+    font-size: 28px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    margin: 4px 0 8px;
+  }
+  .stage-label {
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--line);
+    color: var(--muted);
+    display: inline-block;
+  }
+  .stage-label.warn { background: rgba(245, 158, 11, .2); color: var(--warn); }
+  .stage-label.crit { background: rgba(239, 68, 68, .2); color: var(--crit); }
+  .stage-label.ok { background: rgba(34, 197, 94, .15); color: var(--ok); }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 14px;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 8px;
+    user-select: none;
+    touch-action: none;
+  }
+  button.secondary { background: var(--line); }
+  button.stop { background: var(--crit); }
+  button:disabled { opacity: .5; cursor: default; }
+  label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 10px;
+  }
+  input[type="number"] {
+    width: 90px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 5px 8px;
+  }
+  input[type="checkbox"] { width: 18px; height: 18px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 0 0 6px; line-height: 1.5; }
+  .pad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .pad button { margin-top: 0; padding: 12px 6px; }
+  #log {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 240px;
+    overflow-y: auto;
+    font-size: 13px;
+    font-family: ui-monospace, Consolas, monospace;
+  }
+  #log li { padding: 4px 0; border-bottom: 1px solid var(--line); color: var(--muted); }
+  #log li.ok { color: var(--ok); }
+  #log li.warn { color: var(--warn); }
+  #log li.err { color: var(--crit); }
+  #log li.alert { color: var(--crit); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Driver Sleep Monitor</h1>
+  <p>Eyes closed for 2 s: the car stops and the buzzer sounds until your eyes open. Eyes closed for 5 s: Telegram alert.</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Camera</h2>
+    <button id="cameraBtn">Start camera</button>
+    <div id="stage">
+      <video id="video" playsinline muted></video>
+      <canvas id="canvas" width="720" height="480"></canvas>
+    </div>
+    <p style="color: var(--muted); font-size: 13px; margin: 10px 0 0;">
+      Demo mode: hold <strong>Space</strong> to close your eyes.
+    </p>
+  </section>
+
+  <aside style="display: flex; flex-direction: column; gap: 16px;">
+    <section class="card">
+      <h2>Status</h2>
+      <div class="stage-label ok" id="stageLabel">Starting…</div>
+      <div class="big" id="timer">0.00 s</div>
+      <div class="row"><span>EAR</span><span id="ear">N/A</span></div>
+      <div class="row"><span>Car</span><span id="carState">Not connected</span></div>
+      <div class="row"><span>Telegram ESP32</span><span id="telegramState">Simulated</span></div>
+    </section>
+
+    <section class="card">
+      <h2>Car (Bluetooth)</h2>
+      <p class="hint">
+        1. Turn the car on.<br>
+        2. Pair <strong>ESP32-Motor</strong> in Windows Bluetooth settings.<br>
+        3. Click Connect car and pick its Bluetooth COM port.
+      </p>
+      <button id="carBtn">Connect car</button>
+      <label>Auto forward (eyes open) <input id="autoToggle" type="checkbox" checked></label>
+      <div class="pad">
+        <span></span>
+        <button class="dir" data-dir="F" disabled>Forward</button>
+        <span></span>
+        <button class="dir" data-dir="L" disabled>Left</button>
+        <button id="stopBtn" class="stop">Stop</button>
+        <button class="dir" data-dir="R" disabled>Right</button>
+        <span></span>
+        <button class="dir" data-dir="B" disabled>Back</button>
+        <span></span>
+      </div>
+      <p class="hint" style="margin-top: 8px;">Turn Auto forward off to drive with the buttons. Stop turns it off and halts the car.</p>
+    </section>
+
+    <section class="card">
+      <h2>Settings</h2>
+      <button id="telegramBtn" class="secondary">Connect Telegram ESP32 (optional)</button>
+      <button id="demoBtn" class="secondary">Switch to demo mode</button>
+      <label>EAR threshold <input id="threshold" type="number" step="0.01" min="0" max="1" value="0.23"></label>
+      <label>Car stop after (s) <input id="minInterval" type="number" step="0.5" min="0.5" value="2"></label>
+      <label>Telegram alert after (s) <input id="maxInterval" type="number" step="0.5" min="1" value="5"></label>
+    </section>
+
+    <section class="card">
+      <h2>Log</h2>
+      <ul id="log"></ul>
+    </section>
+  </aside>
+</main>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const $ = id => document.getElementById(id);
+const video = $("video");
+const canvas = $("canvas");
+const ctx = canvas.getContext("2d");
+const encoder = new TextEncoder();
+
+// MediaPipe landmark indices for the eyes (same as main.py)
+const LEFT_EYE = [33, 160, 158, 133, 153, 144];
+const RIGHT_EYE = [362, 385, 387, 263, 373, 380];
+const DIRECTION_NAMES = { F: "forward", B: "backward", L: "left", R: "right", S: "stopped" };
+
+// minInterval = car stop, maxInterval = Telegram alert
+const cfg = { threshold: 0.23, minInterval: 2.0, maxInterval: 5.0 };
+const state = {
+  ear: null,
+  closedStart: null,
+  closedSeconds: 0,
+  carStopped: false,
+  telegramSent: false,
+  autoMode: true,
+  manualDir: "S",
+  demo: false,
+  spaceDown: false,
+};
+const hw = { car: null, telegram: null };
+let landmarker = null;
+let cameraStream = null;
+let heartbeatTimer = null;
+let heartbeatBusy = false;
+
+// ---------- Logging ----------
+function log(message, cls = "") {
+  const li = document.createElement("li");
+  li.className = cls;
+  li.textContent = `${new Date().toLocaleTimeString()}  ${message}`;
+  $("log").prepend(li);
+  while ($("log").children.length > 100) $("log").lastChild.remove();
+}
+
+// ---------- Serial connections (Web Serial) ----------
+async function openPort(which, baudRate) {
+  if (!("serial" in navigator)) {
+    log("Web Serial is not available. Use Chrome or Edge.", "err");
+    return null;
+  }
+  const port = await navigator.serial.requestPort();
+  await port.open({ baudRate });
+  return { port, writer: port.writable.getWriter() };
+}
+
+async function connectCar() {
+  try {
+    hw.car = await openPort("car", 115200);
+    if (!hw.car) return;
+    state.autoMode = $("autoToggle").checked;
+    updateCarUi();
+    startHeartbeat();
+    log("Car connected. Auto forward is on.", "ok");
+  } catch (err) {
+    log(`Could not connect car: ${err.message}`, "err");
+  }
+}
+
+async function disconnectCar() {
+  const device = hw.car;
+  hw.car = null;
+  stopHeartbeat();
+  updateCarUi();
+  if (device) {
+    try {
+      device.writer.releaseLock();
+      await device.port.close();
+    } catch {}
+  }
+  log("Car disconnected. It stops when the link is lost.", "warn");
+}
+
+async function connectTelegram() {
+  try {
+    hw.telegram = await openPort("telegram", 9600);
+    if (!hw.telegram) return;
+    $("telegramState").textContent = "Connected";
+    log("Telegram ESP32 connected", "ok");
+  } catch (err) {
+    log(`Could not connect Telegram ESP32: ${err.message}`, "err");
+  }
+}
+
+async function sendTelegramAlert() {
+  if (!hw.telegram) {
+    log("[simulated] Telegram alert (ESP32 not connected)");
+    return;
+  }
+  try {
+    await hw.telegram.writer.write(encoder.encode("S"));
+    log("Telegram alert sent", "ok");
+  } catch (err) {
+    log(`Telegram send failed: ${err.message}`, "err");
+  }
+}
+
+// The car needs a steady stream of lines. Each line sets motion and buzzer;
+// if the lines stop, the car's own watchdog stops it.
+function carCommand() {
+  if (state.closedSeconds >= cfg.minInterval) return { motion: "S", buzzer: "1" };
+  if (state.autoMode) return { motion: "F", buzzer: "0" };
+  return { motion: state.manualDir, buzzer: "0" };
+}
+
+function startHeartbeat() {
+  if (heartbeatTimer === null) heartbeatTimer = setInterval(sendHeartbeat, 250);
+}
+
+function stopHeartbeat() {
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
+async function sendHeartbeat() {
+  if (!hw.car || heartbeatBusy) return;
+  const { motion, buzzer } = carCommand();
+  heartbeatBusy = true;
+  try {
+    await hw.car.writer.write(encoder.encode(`${motion}${buzzer}\n`));
+  } catch (err) {
+    log(`Car link lost: ${err.message}`, "err");
+    disconnectCar();
+  } finally {
+    heartbeatBusy = false;
+  }
+}
+
+function updateCarUi() {
+  $("carBtn").textContent = hw.car ? "Disconnect car" : "Connect car";
+  updateManualButtons();
+}
+
+function updateManualButtons() {
+  const manual = hw.car && !state.autoMode;
+  document.querySelectorAll(".dir").forEach(btn => { btn.disabled = !manual; });
+}
+
+// ---------- Detection ----------
+function eyeAspectRatio(landmarks, indices, w, h) {
+  const p = indices.map(i => [landmarks[i].x * w, landmarks[i].y * h]);
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const horizontal = dist(p[0], p[3]);
+  if (horizontal === 0) return 0;
+  return (dist(p[1], p[5]) + dist(p[2], p[4])) / (2 * horizontal);
+}
+
+function boundsOf(landmarks, indices, w, h) {
+  const xs = indices.map(i => landmarks[i].x * w);
+  const ys = indices.map(i => landmarks[i].y * h);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+function detect(now) {
+  if (state.demo) {
+    state.ear = state.spaceDown ? 0.15 : 0.35;
+    return { closed: state.spaceDown, boxes: [] };
+  }
+  if (!landmarker || video.readyState < 2) {
+    state.ear = null;
+    return { closed: false, boxes: [] };
+  }
+  const result = landmarker.detectForVideo(video, now);
+  if (!result.faceLandmarks || result.faceLandmarks.length === 0) {
+    state.ear = null;
+    return { closed: false, boxes: [] };
+  }
+  const lm = result.faceLandmarks[0];
+  const w = canvas.width;
+  const h = canvas.height;
+  const left = eyeAspectRatio(lm, LEFT_EYE, w, h);
+  const right = eyeAspectRatio(lm, RIGHT_EYE, w, h);
+  state.ear = (left + right) / 2;
+  return {
+    closed: state.ear < cfg.threshold,
+    boxes: [boundsOf(lm, LEFT_EYE, w, h), boundsOf(lm, RIGHT_EYE, w, h)],
+  };
+}
+
+function updateTimers(closed) {
+  const t = performance.now() / 1000;
+  if (closed) {
+    if (state.closedStart === null) state.closedStart = t;
+    state.closedSeconds = t - state.closedStart;
+
+    if (state.closedSeconds >= cfg.minInterval && !state.carStopped) {
+      state.carStopped = true;
+      log(`Eyes closed ${state.closedSeconds.toFixed(1)} s: car stopped, buzzer on`, "alert");
+    }
+    if (state.closedSeconds >= cfg.maxInterval && !state.telegramSent) {
+      state.telegramSent = true;
+      log(`Eyes closed ${state.closedSeconds.toFixed(1)} s: sending Telegram alert`, "alert");
+      sendTelegramAlert();
+    }
+  } else {
+    if (state.carStopped) {
+      log(state.autoMode && hw.car ? "Eyes open: car drives forward again" : "Eyes open: car stop lifted", "ok");
+    }
+    state.closedStart = null;
+    state.closedSeconds = 0;
+    state.carStopped = false;
+    state.telegramSent = false;
+  }
+}
+
+// ---------- Drawing ----------
+function drawFrame(det) {
+  const w = canvas.width;
+  const h = canvas.height;
+  const sec = state.closedSeconds;
+  const min = cfg.minInterval;
+  const max = cfg.maxInterval;
+
+  if (!state.demo && video.readyState >= 2) {
+    ctx.drawImage(video, 0, 0, w, h);
+  } else {
+    ctx.fillStyle = "#282828";
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 26px system-ui";
+    ctx.fillText("DEMO MODE", 40, 150);
+    ctx.font = "18px system-ui";
+    ctx.fillStyle = "#ffd166";
+    ctx.fillText("Hold SPACE to close your eyes", 40, 200);
+    ctx.fillStyle = "#86efac";
+    ctx.fillText("Release SPACE to open them", 40, 235);
+  }
+
+  for (const b of det.boxes) {
+    ctx.strokeStyle = det.closed ? "#ef4444" : "#22c55e";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(b.x0 - 2, b.y0 - 2, b.x1 - b.x0 + 4, b.y1 - b.y0 + 4);
+  }
+
+  let text, color, bg;
+  if (sec >= max) { text = `CRITICAL: EYES CLOSED > ${max.toFixed(1)} s`; color = "#ef4444"; bg = "rgba(120,0,0,.85)"; }
+  else if (sec >= min) { text = `CAR STOPPED: EYES CLOSED ${sec.toFixed(1)} s`; color = "#f59e0b"; bg = "rgba(110,60,0,.85)"; }
+  else if (sec > 0.3) { text = `EYES CLOSED (${sec.toFixed(1)} s)`; color = "#facc15"; bg = "rgba(20,20,20,.7)"; }
+  else { text = "DRIVER AWAKE & ALERT"; color = "#22c55e"; bg = "rgba(20,20,20,.7)"; }
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, 56);
+  ctx.fillStyle = color;
+  ctx.font = "bold 20px system-ui";
+  ctx.fillText(text, 16, 36);
+
+  const barX = 20, barY = h - 34, barW = w - 40, barH = 18;
+  ctx.fillStyle = "#333";
+  ctx.fillRect(barX, barY, barW, barH);
+  const fill = Math.min(sec / Math.max(max, 0.1), 1) * barW;
+  ctx.fillStyle = sec >= max ? "#ef4444" : sec >= min ? "#f59e0b" : "#22c55e";
+  if (fill > 0) ctx.fillRect(barX, barY, fill, barH);
+  const markX = barX + barW * (min / max);
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(markX - 1, barY - 4, 2, barH + 8);
+}
+
+// ---------- Readouts ----------
+function carStatusText() {
+  if (!hw.car) return "Not connected";
+  if (state.closedSeconds >= cfg.minInterval) return "Stopped, buzzer on";
+  if (state.autoMode) return "Driving forward";
+  return `Manual: ${DIRECTION_NAMES[state.manualDir]}`;
+}
+
+function updateReadouts() {
+  $("ear").textContent = state.ear === null ? "N/A" : state.ear.toFixed(2);
+  $("timer").textContent = `${state.closedSeconds.toFixed(2)} s`;
+  $("carState").textContent = carStatusText();
+
+  const label = $("stageLabel");
+  if (state.closedSeconds >= cfg.maxInterval) {
+    label.className = "stage-label crit"; label.textContent = "Critical: Telegram alert";
+  } else if (state.closedSeconds >= cfg.minInterval) {
+    label.className = "stage-label warn"; label.textContent = "Car stopped: buzzer on";
+  } else if (state.closedSeconds > 0.3) {
+    label.className = "stage-label warn"; label.textContent = "Eyes closed";
+  } else {
+    label.className = "stage-label ok"; label.textContent = "Awake";
+  }
+}
+
+// ---------- Main loop ----------
+function loop() {
+  const now = performance.now();
+  const det = detect(now);
+  updateTimers(det.closed);
+  drawFrame(det);
+  updateReadouts();
+  requestAnimationFrame(loop);
+}
+
+// ---------- Camera and model ----------
+async function loadModel() {
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  // The model file sits in the project root, one folder above this page
+  return FaceLandmarker.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: "../face_landmarker.task" },
+    runningMode: "VIDEO",
+    numFaces: 1,
+  });
+}
+
+async function startCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    video.srcObject = cameraStream;
+    await video.play();
+    canvas.width = video.videoWidth || 720;
+    canvas.height = video.videoHeight || 480;
+    landmarker = await loadModel();
+    state.demo = false;
+    $("cameraBtn").textContent = "Camera on";
+    $("demoBtn").disabled = false;
+    log("Camera and face model ready", "ok");
+  } catch (err) {
+    log(`Camera or model unavailable: ${err.message}. Switching to demo mode.`, "warn");
+    $("cameraBtn").disabled = false;
+    enableDemo();
+  }
+}
+
+function enableDemo() {
+  state.demo = true;
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+  canvas.width = 720;
+  canvas.height = 480;
+  $("demoBtn").disabled = true;
+  log("Demo mode on. Hold Space to close your eyes.", "warn");
+}
+
+// ---------- Wiring ----------
+$("cameraBtn").addEventListener("click", () => {
+  $("cameraBtn").disabled = true;
+  startCamera();
+});
+$("demoBtn").addEventListener("click", enableDemo);
+$("telegramBtn").addEventListener("click", connectTelegram);
+
+$("carBtn").addEventListener("click", () => {
+  if (hw.car) disconnectCar();
+  else connectCar();
+});
+
+$("autoToggle").addEventListener("change", e => {
+  state.autoMode = e.target.checked;
+  state.manualDir = "S";
+  updateManualButtons();
+  log(state.autoMode ? "Auto forward on" : "Auto forward off: use the direction buttons", "ok");
+});
+
+// Hold a direction button to drive; release to stop
+document.querySelectorAll(".dir").forEach(btn => {
+  const dir = btn.dataset.dir;
+  btn.addEventListener("pointerdown", () => { if (!state.autoMode) state.manualDir = dir; });
+  for (const ev of ["pointerup", "pointerleave", "pointercancel"]) {
+    btn.addEventListener(ev, () => { state.manualDir = "S"; });
+  }
+});
+
+$("stopBtn").addEventListener("click", () => {
+  state.autoMode = false;
+  state.manualDir = "S";
+  $("autoToggle").checked = false;
+  updateManualButtons();
+  log("Stop: auto forward off", "warn");
+});
+
+for (const id of ["threshold", "minInterval", "maxInterval"]) {
+  $(id).addEventListener("change", e => {
+    const value = parseFloat(e.target.value);
+    if (!Number.isFinite(value)) return;
+    if (id === "threshold") cfg.threshold = value;
+    else if (id === "minInterval") cfg.minInterval = value;
+    else cfg.maxInterval = value;
+    if (cfg.minInterval >= cfg.maxInterval) {
+      log("Car stop time must be shorter than the Telegram alert time", "err");
+    }
+  });
+}
+
+window.addEventListener("keydown", e => {
+  if (state.demo && e.code === "Space") {
+    e.preventDefault();
+    state.spaceDown = true;
+  }
+});
+window.addEventListener("keyup", e => {
+  if (e.code === "Space") state.spaceDown = false;
+});
+
+updateCarUi();
+requestAnimationFrame(loop);
+startCamera();
+</script>
+</body>
+</html>
