@@ -35,6 +35,10 @@ A laptop webcam watches your eyes. If your eyes stay closed for **2 seconds**, t
 | `start_web_app.bat` | Starts the web app on Windows |
 | `start_web_app.sh` | Starts the web app on macOS and Linux |
 | `USAGE.md` | Step-by-step setup and use |
+| `video/explainer.mp4` | 5-minute explainer video with narration (stored with Git LFS) |
+| `docs/Project-Report.docx` | Project report |
+| `docs/Presentation.pptx` | Project presentation |
+| `REFERENCES.md` | Research papers we used |
 
 ## Parts
 
